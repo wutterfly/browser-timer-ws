@@ -1,76 +1,59 @@
-use futures_util::{SinkExt, StreamExt};
-use std::{net::SocketAddr, time::Duration};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{
-    accept_async,
-    tungstenite::{Error, Message, Result},
-};
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
+#![allow(clippy::module_name_repetitions)]
+
+mod data;
+mod err;
+mod message;
+mod ping;
+mod server;
+
+use data::{DataHolder, WriteOn};
+use env_logger::Env;
+use futures_util::lock::Mutex;
+use message::EventTyp;
+use server::Server;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // initialize global logger
+    env_logger::Builder::from_env(Env::default().default_filter_or("trace"))
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "[{:<5}] -- [{}]  {}",
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .filter_module("tokio_tungstenite", log::LevelFilter::Off)
+        .filter_module("tungstenite", log::LevelFilter::Off)
+        .init();
+
+    // build async runtime
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
-    rt.block_on(start_server())?;
-    Ok(())
-}
+    // prepare data output
+    let data = Arc::new(Mutex::new(DataHolder::new(
+        Some(WriteOn::Filter(Box::new(|data| {
+            data.key_code == 27 && data.typ == EventTyp::KeyUp
+        }))),
+        PathBuf::from("./output"),
+        "./key_data",
+    )?));
 
-async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "127.0.0.1:8080";
+    // create websocket server
+    let server = Server::new(4);
 
-    // Create the event loop and TCP listener we'll accept connections on.
-    let try_socket = TcpListener::bind(&addr).await?;
-    let listener = try_socket;
+    let port = 8021;
 
-    println!("Listening on: {}", addr);
-
-    while let Ok((stream, _)) = listener.accept().await {
-        let peer = stream
-            .peer_addr()
-            .expect("connected streams should have a peer address");
-        tokio::spawn(accept_connection(peer, stream));
-    }
-
-    Ok(())
-}
-
-async fn accept_connection(peer: SocketAddr, stream: TcpStream) {
-    if let Err(e) = handle_connection(peer, stream).await {
-        match e {
-            Error::ConnectionClosed | Error::Protocol(_) | Error::Utf8 => (),
-            err => println!("Error processing connection: {}", err),
-        }
-    }
-}
-
-async fn handle_connection(peer: SocketAddr, stream: TcpStream) -> Result<()> {
-    let ws_stream = accept_async(stream).await?;
-    println!("New WebSocket connection: {}", peer);
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
-    let mut interval = tokio::time::interval(Duration::from_millis(2000));
-
-    // Echo incoming WebSocket messages and send a message periodically every second.
-    loop {
-        tokio::select! {
-            msg = ws_receiver.next() => {
-                match msg {
-                    Some(msg) => {
-                        let msg = msg?;
-                        if msg.is_text() ||msg.is_binary() {
-                            ws_sender.send(msg).await?;
-                        } else if msg.is_close() {
-                            println!("Connection closed: {}", peer);
-                            break;
-                        }
-                    }
-                    None => break,
-                }
-            }
-            _ = interval.tick() => {
-                ws_sender.send(Message::Text("tick".to_owned())).await?;
-            }
-        }
-    }
+    // start server
+    rt.block_on(server.start_server(data, port))?;
 
     Ok(())
 }
