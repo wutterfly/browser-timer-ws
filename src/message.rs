@@ -61,7 +61,6 @@ impl TryFrom<&str> for TimerMessage {
     type Error = MessageError;
 
     fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
-        log::debug!("{value}");
         let mut split = value.split(' ');
 
         if let Some(code_str) = split.next() {

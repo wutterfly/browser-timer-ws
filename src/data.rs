@@ -54,7 +54,7 @@ pub struct DataHolder {
 impl DataHolder {
     pub fn new(write_on: Option<WriteOn>, out_dir: PathBuf, out_prefix: &'static str) -> Self {
         let cc = CONN_COUNTER.fetch_add(1, Ordering::Relaxed);
-        log::debug!("New Connection Data Holder: {cc}");
+        log::trace!("New Connection Data Holder: {cc}");
 
         let first_timestamp = now();
         Self {

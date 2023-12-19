@@ -150,7 +150,6 @@ impl Server {
         data: &mut DataHolder,
     ) -> Result<bool, Error> {
         if let Message::Text(txt) = msg {
-            log::debug!("{txt}");
             let msg = TimerMessage::try_from(txt.as_str())?;
 
             match msg {
