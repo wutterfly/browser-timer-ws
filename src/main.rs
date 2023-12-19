@@ -7,10 +7,10 @@ mod err;
 mod message;
 mod ping;
 mod server;
+mod time;
 
-use data::{DataHolder, WriteOn};
+use data::{Distributer, WriteOn};
 use env_logger::Env;
-use futures_util::lock::Mutex;
 use message::EventTyp;
 use server::Server;
 use std::io::Write;
@@ -39,13 +39,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     // prepare data output
-    let data = Arc::new(Mutex::new(DataHolder::new(
-        Some(WriteOn::Filter(Box::new(|data| {
+    let dist = Distributer::new(
+        Some(WriteOn::Filter(Arc::new(|data| {
             data.key_code == 27 && data.typ == EventTyp::KeyUp
         }))),
         PathBuf::from("./output"),
         "./key_data",
-    )?));
+    )?;
 
     // create websocket server
     let server = Server::new(4);
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = 8021;
 
     // start server
-    rt.block_on(server.start_server(data, port))?;
+    rt.block_on(server.start_server(dist, port))?;
 
     Ok(())
 }

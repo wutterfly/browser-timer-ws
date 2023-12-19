@@ -51,8 +51,8 @@ pub enum TimerMessage {
         rtt: u128,
     },
     Data {
-        key: String,
-        key_code: u32,
+        key: Box<str>,
+        key_code: u16,
         typ: EventTyp,
     },
 }
@@ -93,7 +93,7 @@ impl TryFrom<&str> for TimerMessage {
                     };
 
                     let key_code = if let Some(code) = split.next() {
-                        code.parse::<u32>().map_err(|_| {
+                        code.parse::<u16>().map_err(|_| {
                             log::error!("KeyCode: {}", value);
                             MessageError::KeyCodeParseError
                         })?
@@ -107,7 +107,11 @@ impl TryFrom<&str> for TimerMessage {
                         _ => return Err(MessageError::InvalidTyp),
                     };
 
-                    Ok(Self::Data { key, key_code, typ })
+                    Ok(Self::Data {
+                        key: key.into(),
+                        key_code,
+                        typ,
+                    })
                 }
             }
         } else {

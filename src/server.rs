@@ -1,12 +1,11 @@
 use data::Data;
 use err::{Error, MessageError};
-use futures_util::{lock::Mutex, stream::SplitSink, SinkExt, StreamExt};
+use futures_util::{stream::SplitSink, SinkExt, StreamExt};
 use message::TimerMessage;
 use ping::PingPong;
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{
@@ -16,8 +15,9 @@ use tokio_tungstenite::{
 };
 
 use crate::{
-    data::{self, DataHolder},
+    data::{self, DataHolder, Distributer},
     err, message, ping,
+    time::now,
 };
 
 pub struct Server {
@@ -33,7 +33,7 @@ impl Server {
     /// Starts the websocket server.
     pub async fn start_server(
         &self,
-        data: Arc<Mutex<DataHolder>>,
+        data: Distributer,
         port: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let addr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
@@ -49,10 +49,12 @@ impl Server {
                 .peer_addr()
                 .expect("connected streams should have a peer address");
 
+            let holder = data.new_connection();
+
             tokio::spawn(Self::accept_connection(
                 peer,
                 stream,
-                data.clone(),
+                holder,
                 self.ping_interval,
             ));
         }
@@ -64,7 +66,7 @@ impl Server {
     async fn accept_connection(
         peer: SocketAddr,
         stream: TcpStream,
-        data: Arc<Mutex<DataHolder>>,
+        data: DataHolder,
         ping_interval: u64,
     ) {
         // accept connection and handle handshake
@@ -90,7 +92,7 @@ impl Server {
     /// Receives messages and sends ping requests.
     async fn handle_connection(
         ws_stream: WebSocketStream<TcpStream>,
-        data: Arc<Mutex<DataHolder>>,
+        mut data: DataHolder,
         ping_interval: u64,
     ) -> Result<(), Error> {
         // split connection into sender and receiver
@@ -105,7 +107,7 @@ impl Server {
                 msg = ws_receiver.next() => {
                     if let Some(msg) = msg {
                         // check if closed
-                        if Self::handle_message(msg?, &mut ping,&mut ws_sender, &data).await? {
+                        if Self::handle_message(msg?, &mut ping,&mut ws_sender, &mut data).await? {
                             break;
                         }
                     }
@@ -145,7 +147,7 @@ impl Server {
         msg: Message,
         ping: &mut PingPong,
         ws_sender: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-        data: &Arc<Mutex<DataHolder>>,
+        data: &mut DataHolder,
     ) -> Result<bool, Error> {
         if let Message::Text(txt) = msg {
             log::debug!("{txt}");
@@ -157,22 +159,21 @@ impl Server {
                         ws_sender
                             .send(Message::Text(TimerMessage::Rtt { rtt }.as_string()))
                             .await?;
-                        data.lock().await.update_rtt(rtt);
+                        data.update_rtt(rtt);
                     }
                     Err(Some(c)) => log::warn!("no matching counter: {c}"),
                     Err(None) => log::warn!("no ping requested"),
                 },
 
                 TimerMessage::Data { key, key_code, typ } => {
-                    let now = SystemTime::now();
-                    let timestamp = now
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis();
+                    let timestamp = now();
 
-                    data.lock().await.push(Data {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let relativ = (timestamp - data.first_timestamp()) as u64;
+
+                    data.push(Data {
                         key,
-                        timestamp,
+                        timestamp: relativ,
                         typ,
                         key_code,
                     })?;
