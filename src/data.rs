@@ -53,6 +53,8 @@ pub struct DataHolder {
 
 impl DataHolder {
     pub fn new(write_on: Option<WriteOn>, out_dir: PathBuf, out_prefix: &'static str) -> Self {
+        log::debug!("New Connection Data Holder");
+
         let cc = CONN_COUNTER.fetch_add(1, Ordering::Relaxed);
         let first_timestamp = now();
         Self {
